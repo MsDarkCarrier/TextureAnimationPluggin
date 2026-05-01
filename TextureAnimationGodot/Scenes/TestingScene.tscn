@@ -38,5 +38,6 @@ timePerMilSeconds = 50
 totalRows = 5
 totalCols = 8
 totalFrames = 37
+initialFrame = 9
 autoLoad = true
 metadata/_custom_type_script = "uid://b2qsr4kydul4f"
