@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections;
+using System.Threading;
 using System.Threading.Tasks;
 
 [Tool]
@@ -15,13 +16,13 @@ public partial class TextureAnimation : TextureRect
     [Export] private int totalFrames = 1;
     [Export] public int initialFrame { get; private set; } = 0;
     [Export] private int finishFrame = 0;
-    [Export] public bool loop = false;
+    [Export] public bool loop = false, activate = false;
     [Export] private bool autoLoad = false, pausable = true;
 
-    private bool breakAnimation = false, initCorrutine = false;
     private int separationX, separationY;
     public int actualFrame { get; private set; } = 0;
     public bool realActiveAnimation { get; private set; } = false;
+    private CancellationTokenSource tokenAnim;
 
     public override void _Ready()
     {
@@ -32,7 +33,16 @@ public partial class TextureAnimation : TextureRect
         separationY = (int)atlasImage.Region.Size.Y;
         actualFrame = initialFrame;
 
-        if (autoLoad) _ = TextureAnimRise();
+        activate = autoLoad;
+    }
+
+    public override void _Process(double delta)
+    {
+        if (activate)
+        {
+            activate = false;
+            TextureAnimRise();
+        }
     }
 
     private void UpdateAtlasFrame(int frame)
@@ -46,27 +56,24 @@ public partial class TextureAnimation : TextureRect
         atlasImage.Region = new Rect2(x, y, separationX, separationY);
     }
 
-    private async Task TextureAnimProcess()
+    private async Task TextureAnimProcess(CancellationToken token)
     {
         realActiveAnimation = true;
-        breakAnimation = false;
         try
         {
-            while (!breakAnimation)
+            while (!token.IsCancellationRequested)
             {
                 foreach (IEnumerable frame in FrameCalc())
                 {
                     while (GetTree().Paused && pausable) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
                     await ToSignal(GetTree().CreateTimer(timePerMilSeconds / 1000.0f), SceneTreeTimer.SignalName.Timeout);
-                    if (breakAnimation) break;
+                    if (token.IsCancellationRequested) break;
                 }
 
                 if (!loop) break;
             }
         }
-        catch (Exception) { }
-
-
+        catch (TaskCanceledException) { }
         realActiveAnimation = false;
     }
 
@@ -86,27 +93,18 @@ public partial class TextureAnimation : TextureRect
         }
     }
 
-
-    public async Task TextureAnimRise(Action changeParameters = null, Action changeTime = null)
+    public void TextureAnimRise()
     {
-        if (initCorrutine || atlasImage == null) return;
-        initCorrutine = true;
-
-        if (realActiveAnimation)
-        {
-            breakAnimation = true;
-            while (realActiveAnimation) await ToSignal(GetTree().CreateTimer(0.1f), SceneTreeTimer.SignalName.Timeout);
-            breakAnimation = false;
-        }
-        changeParameters?.Invoke();
-        changeTime?.Invoke();
-        _ = TextureAnimProcess();
-        initCorrutine = false;
-
+        if (atlasImage == null) return;
+        tokenAnim?.Cancel();
+        tokenAnim = new CancellationTokenSource();
+        _ = TextureAnimProcess(tokenAnim.Token);
     }
 
     public void ChangeAnimation(int frameInitial, int endFrame, int actualframeV, bool loopAnimation)
     {
+        tokenAnim?.Cancel();
+        tokenAnim = new CancellationTokenSource();
         initialFrame = frameInitial;
         finishFrame = endFrame;
         actualFrame = actualframeV;
